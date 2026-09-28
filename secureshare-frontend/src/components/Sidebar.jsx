@@ -1,7 +1,15 @@
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 
 function Sidebar() {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    navigate("/login");
+  };
+
   return (
     <aside className="sidebar">
       
@@ -37,7 +45,7 @@ function Sidebar() {
 
       {/* Logout */}
       <div className="logout-section">
-        <button className="menu-item logout-menu">
+        <button className="menu-item logout-menu" onClick={handleLogout}>
           🚪 <span>Logout</span>
         </button>
       </div>

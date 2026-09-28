@@ -2,25 +2,30 @@ import { Router } from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
-import {
-  PutObjectCommand,
-  GetObjectCommand,
-  DeleteObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import { BlobSASPermissions } from "@azure/storage-blob";
+
 import db from "../config/db.js";
-import s3Client from "../config/s3.js";
+import blobServiceClient from "../config/azureBlob.js";
 import { authenticate } from "../middleware/auth.js";
 
-const router = Router();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadsDir = path.join(__dirname, "..", "uploads");
 
-// Multer config (temp storage before S3 upload)
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
 });
 
-// Helper: get icon from file type
+const containerName = process.env.AZURE_CONTAINER_NAME || "files";
+
+// Helpers
 function getIcon(mimetype) {
   if (mimetype.includes("pdf")) return "📄";
   if (mimetype.includes("image")) return "🖼️";
@@ -30,7 +35,6 @@ function getIcon(mimetype) {
   return "📄";
 }
 
-// Helper: get readable type
 function getType(mimetype, filename) {
   const ext = path.extname(filename).toLowerCase();
   const map = {
@@ -40,19 +44,17 @@ function getType(mimetype, filename) {
     ".pptx": "PowerPoint", ".ppt": "PowerPoint",
     ".docx": "Word", ".doc": "Word",
     ".txt": "Text",
-    ".zip": "Archive", ".rar": "Archive",
   };
   return map[ext] || "File";
 }
 
-// Helper: format file size
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-// UPLOAD FILE
+// UPLOAD FILE TO AZURE BLOB / LOCAL
 router.post("/upload", authenticate, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -61,31 +63,50 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
 
     const userId = req.user.id;
     const originalName = req.file.originalname;
-    const s3Key = `${userId}/${uuidv4()}-${originalName}`;
+    const blobName = `${userId}/${uuidv4()}-${originalName}`;
+    let isAzure = false;
 
-    // Upload to S3
-    const uploadCommand = new PutObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: s3Key,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
-    });
-    await s3Client.send(uploadCommand);
+    // Try Azure Upload if configured
+    if (blobServiceClient) {
+      try {
+        const containerClient = blobServiceClient.getContainerClient(containerName);
+        await containerClient.createIfNotExists();
+        
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        await blockBlobClient.uploadData(req.file.buffer, {
+          blobHTTPHeaders: { blobContentType: req.file.mimetype },
+        });
+        isAzure = true;
+      } catch (azureErr) {
+        console.warn("⚠️ Azure Blob upload failed, saving to local disk:", azureErr.message);
+      }
+    }
 
-    // Save metadata to DB
+    // Fallback to local storage if Azure isn't configured yet
+    if (!isAzure) {
+      const userFolder = path.join(uploadsDir, String(userId));
+      if (!fs.existsSync(userFolder)) {
+        fs.mkdirSync(userFolder, { recursive: true });
+      }
+      fs.writeFileSync(path.join(uploadsDir, blobName), req.file.buffer);
+    }
+
+    // Save metadata in SQLite
     const result = db.prepare(`
       INSERT INTO files (user_id, original_name, s3_key, file_type, file_size, icon)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       userId,
       originalName,
-      s3Key,
+      blobName,
       getType(req.file.mimetype, originalName),
       req.file.size,
       getIcon(req.file.mimetype)
     );
 
     const file = db.prepare("SELECT * FROM files WHERE id = ?").get(result.lastInsertRowid);
+
+    console.log(`✅ File uploaded (${isAzure ? "Azure Blob Storage" : "Local Disk"}): ${originalName}`);
 
     res.status(201).json({
       id: file.id,
@@ -98,8 +119,8 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
       }),
     });
   } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).json({ error: "Upload failed" });
+    console.error("❌ Upload error:", err);
+    res.status(500).json({ error: "Upload failed: " + err.message });
   }
 });
 
@@ -123,7 +144,7 @@ router.get("/", authenticate, (req, res) => {
   res.json(formatted);
 });
 
-// DOWNLOAD FILE (returns presigned URL)
+// DOWNLOAD FILE (GENERATE AZURE SAS DOWNLOAD URL)
 router.get("/:id/download", authenticate, async (req, res) => {
   try {
     const file = db.prepare(
@@ -134,13 +155,30 @@ router.get("/:id/download", authenticate, async (req, res) => {
       return res.status(404).json({ error: "File not found" });
     }
 
-    const command = new GetObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: file.s3_key,
-    });
+    if (blobServiceClient) {
+      try {
+        const containerClient = blobServiceClient.getContainerClient(containerName);
+        const blockBlobClient = containerClient.getBlockBlobClient(file.s3_key);
 
-    const url = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    res.json({ url, name: file.original_name });
+        // Generate temporary secure SAS download URL (Valid for 1 hour)
+        const sasUrl = await blockBlobClient.generateSasUrl({
+          permissions: BlobSASPermissions.parse("r"), // Read permission
+          expiresOn: new Date(new Date().valueOf() + 3600 * 1000),
+        });
+
+        return res.json({ url: sasUrl, name: file.original_name });
+      } catch (azureErr) {
+        console.warn("Azure SAS link generation failed, looking for local file...");
+      }
+    }
+
+    // Local fallback
+    const localFilePath = path.join(uploadsDir, file.s3_key);
+    if (fs.existsSync(localFilePath)) {
+      return res.json({ url: `http://localhost:5000/uploads/${file.s3_key}`, name: file.original_name });
+    }
+
+    res.status(404).json({ error: "File binary not found" });
   } catch (err) {
     console.error("Download error:", err);
     res.status(500).json({ error: "Download failed" });
@@ -150,7 +188,6 @@ router.get("/:id/download", authenticate, async (req, res) => {
 // RENAME FILE
 router.patch("/:id/rename", authenticate, (req, res) => {
   const { newName } = req.body;
-
   if (!newName || !newName.trim()) {
     return res.status(400).json({ error: "New name is required" });
   }
@@ -159,9 +196,7 @@ router.patch("/:id/rename", authenticate, (req, res) => {
     "SELECT * FROM files WHERE id = ? AND user_id = ?"
   ).get(req.params.id, req.user.id);
 
-  if (!file) {
-    return res.status(404).json({ error: "File not found" });
-  }
+  if (!file) return res.status(404).json({ error: "File not found" });
 
   db.prepare("UPDATE files SET original_name = ? WHERE id = ?")
     .run(newName.trim(), req.params.id);
@@ -176,22 +211,24 @@ router.delete("/:id", authenticate, async (req, res) => {
       "SELECT * FROM files WHERE id = ? AND user_id = ?"
     ).get(req.params.id, req.user.id);
 
-    if (!file) {
-      return res.status(404).json({ error: "File not found" });
+    if (!file) return res.status(404).json({ error: "File not found" });
+
+    // Delete from Azure Blob
+    if (blobServiceClient) {
+      try {
+        const containerClient = blobServiceClient.getContainerClient(containerName);
+        const blockBlobClient = containerClient.getBlockBlobClient(file.s3_key);
+        await blockBlobClient.deleteIfExists();
+      } catch (e) {}
     }
 
-    // Delete from S3
-    await s3Client.send(
-      new DeleteObjectCommand({
-        Bucket: process.env.S3_BUCKET_NAME,
-        Key: file.s3_key,
-      })
-    );
+    // Delete local if exists
+    const localFilePath = path.join(uploadsDir, file.s3_key);
+    if (fs.existsSync(localFilePath)) {
+      fs.unlinkSync(localFilePath);
+    }
 
-    // Delete shares
     db.prepare("DELETE FROM shares WHERE file_id = ?").run(file.id);
-
-    // Delete from DB
     db.prepare("DELETE FROM files WHERE id = ?").run(file.id);
 
     res.json({ message: "File deleted successfully" });
