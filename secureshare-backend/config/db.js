@@ -1,12 +1,30 @@
 import Database from "better-sqlite3";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(__dirname, "..", "secureshare.db"));
 
-// Enable WAL mode
-db.pragma("journal_mode = WAL");
+// Determine database path:
+// On Azure App Service (Production), save to '/home/secureshare.db' for permanent storage.
+// On your local machine, save to project root 'secureshare.db'.
+let dbPath;
+if (process.env.NODE_ENV === "production" && fs.existsSync("/home")) {
+  dbPath = "/home/secureshare.db";
+} else {
+  dbPath = path.join(__dirname, "..", "secureshare.db");
+}
+
+console.log(`📁 SQLite database initialized at: ${dbPath}`);
+
+const db = new Database(dbPath);
+
+// Enable WAL mode for better concurrency performance
+try {
+  db.pragma("journal_mode = WAL");
+} catch (e) {
+  console.warn("⚠️ WAL mode fallback:", e.message);
+}
 
 // Initialize tables
 db.exec(`
