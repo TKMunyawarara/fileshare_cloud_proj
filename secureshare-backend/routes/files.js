@@ -20,7 +20,7 @@ if (!fs.existsSync(uploadsDir)) {
 const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
 
 const containerName = process.env.AZURE_CONTAINER_NAME || "files";
@@ -66,7 +66,6 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
     const blobName = `${userId}/${uuidv4()}-${originalName}`;
     let isAzure = false;
 
-    // Try Azure Upload if configured
     if (blobServiceClient) {
       try {
         const containerClient = blobServiceClient.getContainerClient(containerName);
@@ -82,7 +81,6 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
       }
     }
 
-    // Fallback to local storage if Azure isn't configured yet
     if (!isAzure) {
       const userFolder = path.join(uploadsDir, String(userId));
       if (!fs.existsSync(userFolder)) {
@@ -91,7 +89,6 @@ router.post("/upload", authenticate, upload.single("file"), async (req, res) => 
       fs.writeFileSync(path.join(uploadsDir, blobName), req.file.buffer);
     }
 
-    // Save metadata in SQLite
     const result = db.prepare(`
       INSERT INTO files (user_id, original_name, s3_key, file_type, file_size, icon)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -144,15 +141,18 @@ router.get("/", authenticate, (req, res) => {
   res.json(formatted);
 });
 
-// DOWNLOAD FILE (GENERATE AZURE SAS DOWNLOAD URL)
+// DOWNLOAD FILE (Allows Owner OR Shared Recipient)
 router.get("/:id/download", authenticate, async (req, res) => {
   try {
-    const file = db.prepare(
-      "SELECT * FROM files WHERE id = ? AND user_id = ?"
-    ).get(req.params.id, req.user.id);
+    // Check if the user is the OWNER or if the file was SHARED with their email
+    const file = db.prepare(`
+      SELECT DISTINCT f.* FROM files f
+      LEFT JOIN shares s ON f.id = s.file_id
+      WHERE f.id = ? AND (f.user_id = ? OR s.shared_with_email = ?)
+    `).get(req.params.id, req.user.id, req.user.email);
 
     if (!file) {
-      return res.status(404).json({ error: "File not found" });
+      return res.status(404).json({ error: "File not found or access denied" });
     }
 
     if (blobServiceClient) {
@@ -160,7 +160,7 @@ router.get("/:id/download", authenticate, async (req, res) => {
         const containerClient = blobServiceClient.getContainerClient(containerName);
         const blockBlobClient = containerClient.getBlockBlobClient(file.s3_key);
 
-        // Generate temporary secure SAS download URL (Valid for 1 hour)
+        // Generate temporary SAS download URL (Valid for 1 hour)
         const sasUrl = await blockBlobClient.generateSasUrl({
           permissions: BlobSASPermissions.parse("r"), // Read permission
           expiresOn: new Date(new Date().valueOf() + 3600 * 1000),
@@ -168,14 +168,14 @@ router.get("/:id/download", authenticate, async (req, res) => {
 
         return res.json({ url: sasUrl, name: file.original_name });
       } catch (azureErr) {
-        console.warn("Azure SAS link generation failed, looking for local file...");
+        console.warn("Azure SAS link generation failed, checking local storage...");
       }
     }
 
     // Local fallback
     const localFilePath = path.join(uploadsDir, file.s3_key);
     if (fs.existsSync(localFilePath)) {
-      return res.json({ url: `http://localhost:5000/uploads/${file.s3_key}`, name: file.original_name });
+      return res.json({ url: `/uploads/${file.s3_key}`, name: file.original_name });
     }
 
     res.status(404).json({ error: "File binary not found" });
@@ -213,7 +213,6 @@ router.delete("/:id", authenticate, async (req, res) => {
 
     if (!file) return res.status(404).json({ error: "File not found" });
 
-    // Delete from Azure Blob
     if (blobServiceClient) {
       try {
         const containerClient = blobServiceClient.getContainerClient(containerName);
@@ -222,7 +221,6 @@ router.delete("/:id", authenticate, async (req, res) => {
       } catch (e) {}
     }
 
-    // Delete local if exists
     const localFilePath = path.join(uploadsDir, file.s3_key);
     if (fs.existsSync(localFilePath)) {
       fs.unlinkSync(localFilePath);
