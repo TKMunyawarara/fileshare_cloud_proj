@@ -8,12 +8,26 @@ import { getSettings, updateSettings } from "../api";
 function Settings() {
   const [notifications, setNotifications] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem("darkMode") === "true";
+  });
+
   const navigate = useNavigate();
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Apply dark mode class to <body> whenever darkMode state changes
+  useEffect(() => {
+    if (darkMode) {
+      document.body.classList.add("dark-mode");
+      localStorage.setItem("darkMode", "true");
+    } else {
+      document.body.classList.remove("dark-mode");
+      localStorage.setItem("darkMode", "false");
+    }
+  }, [darkMode]);
 
   const loadSettings = async () => {
     try {
@@ -35,10 +49,10 @@ function Settings() {
     }
   };
 
-  // LOGOUT HANDLER
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    document.body.classList.remove("dark-mode");
     navigate("/login");
   };
 
@@ -102,7 +116,7 @@ function Settings() {
             </div>
           </div>
 
-          {/* Appearance */}
+          {/* Appearance / Dark Mode */}
           <div className="settings-card">
             <div className="settings-title">
               <div className="settings-icon">🎨</div>
@@ -126,7 +140,7 @@ function Settings() {
             </div>
           </div>
 
-          {/* Logout Card */}
+          {/* Logout */}
           <div className="logout-card">
             <div>
               <h3>Logout</h3>

@@ -20,6 +20,12 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  // Restore dark mode preference on page load/refresh
+React.useEffect(() => {
+  if (localStorage.getItem("darkMode") === "true") {
+    document.body.classList.add("dark-mode");
+  }
+}, []);
   return (
     <BrowserRouter>
       <Routes>

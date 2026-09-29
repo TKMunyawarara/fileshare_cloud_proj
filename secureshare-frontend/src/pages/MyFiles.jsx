@@ -68,16 +68,16 @@ function MyFiles() {
 
   // 3. Upload File Handler (Passed into UploadModal)
   const handleUpload = async (fileToUpload) => {
-    try {
-      await uploadFile(fileToUpload);
-      alert("File uploaded successfully to AWS S3!");
-      fetchFiles(); // Refresh our lists from S3
-      setShowUploadModal(false);
-    } catch (err) {
-      console.error("Upload error:", err);
-      alert(err.response?.data?.error || "Upload failed");
-    }
-  };
+  try {
+    await uploadFile(fileToUpload);
+    alert("File uploaded successfully to Azure Blob Storage! ☁️");  // 👈 fixed
+    fetchFiles();
+    setShowUploadModal(false);
+  } catch (err) {
+    console.error("Upload error:", err);
+    alert(err.response?.data?.error || "Upload failed");
+  }
+};
 
   // 4. Rename File Handler
   const handleRenameClick = (file) => {

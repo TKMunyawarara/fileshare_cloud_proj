@@ -109,3 +109,94 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+/* ==========================================
+   DARK MODE STYLES
+   ========================================== */
+body.dark-mode {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+body.dark-mode .dashboard,
+body.dark-mode .main-content,
+body.dark-mode .page-container,
+body.dark-mode .dashboard-content {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+body.dark-mode .sidebar {
+  background-color: #1e293b !important;
+  border-right-color: #334155 !important;
+}
+
+body.dark-mode .sidebar-menu .menu-item,
+body.dark-mode .sidebar .nav-item {
+  color: #94a3b8 !important;
+}
+
+body.dark-mode .sidebar-menu .menu-item.active,
+body.dark-mode .sidebar .nav-item.active {
+  background-color: #334155 !important;
+  color: #38bdf8 !important;
+}
+
+body.dark-mode .navbar,
+body.dark-mode header.navbar {
+  background-color: #1e293b !important;
+  border-bottom-color: #334155 !important;
+  color: #f8fafc !important;
+}
+
+body.dark-mode .settings-card,
+body.dark-mode .profile-card,
+body.dark-mode .stat-card,
+body.dark-mode .logout-card,
+body.dark-mode .file-table-container,
+body.dark-mode .myfiles-table-container,
+body.dark-mode .search-box {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #f8fafc !important;
+  box-shadow: none !important;
+}
+
+body.dark-mode h1,
+body.dark-mode h2,
+body.dark-mode h3,
+body.dark-mode h4,
+body.dark-mode h5,
+body.dark-mode h6,
+body.dark-mode p,
+body.dark-mode span,
+body.dark-mode label,
+body.dark-mode strong,
+body.dark-mode td,
+body.dark-mode th {
+  color: #f8fafc !important;
+}
+
+body.dark-mode table.file-table tr {
+  border-bottom-color: #334155 !important;
+}
+
+body.dark-mode table.file-table tbody tr:hover {
+  background-color: #334155 !important;
+}
+
+body.dark-mode input[type="text"],
+body.dark-mode input[type="email"],
+body.dark-mode input[type="password"],
+body.dark-mode select {
+  background-color: #334155 !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+body.dark-mode .toggle {
+  background-color: #475569 !important;
+}
+
+body.dark-mode .toggle.active {
+  background-color: #6366f1 !important;
+}
