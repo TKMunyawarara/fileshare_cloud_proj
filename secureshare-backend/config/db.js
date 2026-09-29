@@ -6,8 +6,10 @@ let dbInstance = null;
 function initDb() {
   if (!dbInstance) {
     dbInstance = new Database(dbFilePath);
+    
+    // Force SQLite to write directly into secureshare.db (no WAL sidecar files)
     try {
-      dbInstance.pragma("journal_mode = WAL");
+      dbInstance.pragma("journal_mode = DELETE");
     } catch (e) {}
 
     dbInstance.exec(`
@@ -56,7 +58,6 @@ function initDb() {
   return dbInstance;
 }
 
-// Proxy traps calls so DB initializes AFTER Azure sync on startup
 const db = new Proxy({}, {
   get(target, prop) {
     const instance = initDb();
